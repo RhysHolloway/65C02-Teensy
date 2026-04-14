@@ -16,6 +16,12 @@ This tool allows you to do the following:
 - Write to any RAM address or I/O device register while the 65C02 is executing code
 - Enable or Disable AT28C256 EEPROM Software Data Protection
 
+## Modifications to Original Program
+
+- Replace Original Arduino hardware globals with Teensy globals
+- Reworked internal clock and monitor
+- Monitor resets 6502 on start
+
 ## Getting Started
 
 The tool connects to 30-35 different digital signals on the 65C02 and supporting hardware:

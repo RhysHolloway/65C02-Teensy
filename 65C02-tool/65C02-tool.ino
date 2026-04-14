@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <errno.h>
 
 /**************************************************************************************
@@ -26,47 +27,47 @@
  *
  **************************************************************************************/
 
-#define PHI0                2
+#define PHI0                24
 
-#define READY               23
-#define IRQ                 25
-#define NMI                 27
-#define SYNC                29
+#define READY               26
+#define IRQ                 30
+#define NMI                 31
+#define SYNC                27
 
-#define AB0                 31
-#define AB1                 33
-#define AB2                 35
-#define AB3                 37
-#define AB4                 39
-#define AB5                 41
-#define AB6                 43
-#define AB7                 45
+#define AB0                 0
+#define AB1                 1
+#define AB2                 2
+#define AB3                 3
+#define AB4                 4
+#define AB5                 5
+#define AB6                 6
+#define AB7                 7
 
-#define AB8                 47
-#define AB9                 49
-#define AB10                51
-#define AB11                53
-#define AB12                52
-#define AB13                50
-#define AB14                48
-#define AB15                46
+#define AB8                 8
+#define AB9                 9
+#define AB10                10
+#define AB11                11
+#define AB12                12
+#define AB13                13
+#define AB14                14
+#define AB15                15
 
-#define DB0                 30
-#define DB1                 32
-#define DB2                 34
-#define DB3                 36
-#define DB4                 38
-#define DB5                 40
-#define DB6                 42
-#define DB7                 44
+#define DB0                 16
+#define DB1                 17
+#define DB2                 18
+#define DB3                 19
+#define DB4                 20
+#define DB5                 21
+#define DB6                 22
+#define DB7                 23
 
-#define RW_READ             28
-#define BUS_ENABLE          26
-#define SOB                 24
-#define RESET               22
+#define RW_READ             25
+#define BUS_ENABLE          28
+#define SOB                 32
+#define RESET               29
 
-#define PROM_WRITE_DISABLE  14
-#define PROM_OUTPUT_DISABLE 15
+#define PROM_WRITE_DISABLE  32
+#define PROM_OUTPUT_DISABLE 31
 
 /*********************************************
  * ERROR Codes returned by various functions *
@@ -119,6 +120,13 @@ typedef struct
   char    form[14];
   byte    operandSize;
 } ADDRESSMODE;
+
+
+struct BusSample {
+  uint16_t address;
+  uint8_t data;
+  uint8_t flags;   // bit0 = reading, bit1 = opcode fetch
+};
 
 /**********************
  * Run-time constants *
@@ -236,10 +244,10 @@ void setup()
 
   clearAddressData();
   
-  digitalWrite(PROM_WRITE_DISABLE, HIGH);
+  digitalWriteFast(PROM_WRITE_DISABLE, HIGH);
   pinMode(PROM_WRITE_DISABLE, OUTPUT);
 
-  digitalWrite(PROM_OUTPUT_DISABLE, LOW);
+  digitalWriteFast(PROM_OUTPUT_DISABLE, LOW);
   pinMode(PROM_OUTPUT_DISABLE, OUTPUT);
   
   Serial.begin(115200);
@@ -269,7 +277,7 @@ char getChar()
   return c;
 }
 
-int getLine(char *pcBuffer, size_t maxLength)
+int getLine(char *pcBuffer, int maxLength)
 {
   int i = 0;
 
@@ -399,174 +407,102 @@ int stricmp(char const *a, char const *b)
    Get or Set Address, Data, or Control bus pins
  ************************************************/
 
-byte getData()
+inline uint8_t getData()
 {
-  byte data = 0;
-
+  uint8_t data = 0;
   for (int i = 0; i < 8; i++)
   {
-    uint8_t bit = digitalPinToBitMask(DATA[i]);
-    
-    uint8_t port = digitalPinToPort(DATA[i]);
-
-    if (*portInputRegister(port) & bit)
-      data |= 1 << i;
+    data |= digitalReadFast(DATA[i]) << i;
   }
-
   return data;
 }
 
-unsigned int getAddress()
+inline uint16_t getAddress()
 {
-  unsigned int adddress = 0;
-
-  for (int i = 0; i < 16; i++)
-  {
-    uint8_t bit = digitalPinToBitMask(ADDR[i]);
-    
-    uint8_t port = digitalPinToPort(ADDR[i]);
-
-    if (*portInputRegister(port) & bit)
-      adddress |= 1 << i;
+  uint16_t address = 0;
+  for (int i = 0; i < 16; i++) {
+    address |= digitalReadFast(ADDR[i]) << i;
   }
-  
-  return adddress;
+  return address;
 }
 
-void setAddress(unsigned int address)
+void setAddress(uint16_t address)
 {
-  byte oldSREG = SREG;
-
-  cli();
-
-  DDRA |= ADDRMASK[1];
-  DDRB |= ADDRMASK[2];
-  DDRC |= ADDRMASK[3];
-  DDRD |= ADDRMASK[4];
-  DDRE |= ADDRMASK[5];
-  DDRF |= ADDRMASK[6];
-  DDRG |= ADDRMASK[7];
-  DDRH |= ADDRMASK[8];
-  DDRJ |= ADDRMASK[10];
-  DDRK |= ADDRMASK[11];
-  DDRL |= ADDRMASK[12];
-
-  for (unsigned int i = 0, j = 1; i < 16; i++, j = j << 1)
+  noInterrupts();
+  // Drive address pins as outputs and write the bits
+  for (uint8_t i = 0; i < 16; i++)
   {
-    byte pin = ADDR[i];
-
-    byte bit = digitalPinToBitMask(pin);
-
-    volatile byte *pOut = portOutputRegister(digitalPinToPort(pin));
-
-    if (address & j)
-      *pOut |= bit;
-    else
-      *pOut &= ~bit;
+    const uint8_t pin = ADDR[i];
+    pinMode(pin, OUTPUT);
+    digitalWriteFast(pin, (address >> i) & 0x01);
   }
 
-  SREG = oldSREG;
+  interrupts();
 }
 
-void setAddressData(unsigned int address, byte data)
+void setAddressData(uint16_t address, uint8_t data)
 {
-  byte oldSREG = SREG;
+  noInterrupts();
 
-  cli();
-
-  DDRA |= ADDRDATAMASK[1];
-  DDRB |= ADDRDATAMASK[2];
-  DDRC |= ADDRDATAMASK[3];
-  DDRD |= ADDRDATAMASK[4];
-  DDRE |= ADDRDATAMASK[5];
-  DDRF |= ADDRDATAMASK[6];
-  DDRG |= ADDRDATAMASK[7];
-  DDRH |= ADDRDATAMASK[8];
-  DDRJ |= ADDRDATAMASK[10];
-  DDRK |= ADDRDATAMASK[11];
-  DDRL |= ADDRDATAMASK[12];
-
-  for (unsigned int i = 0, j = 1; i < 16; i++, j = j << 1)
+  // Address bus
+  for (uint8_t i = 0; i < 16; i++)
   {
-    byte pin = ADDR[i];
-
-    byte bit = digitalPinToBitMask(pin);
-
-    volatile byte *pOut = portOutputRegister(digitalPinToPort(pin));
-
-    if (address & j)
-      *pOut |= bit;
-    else
-      *pOut &= ~bit;
+    const uint8_t pin = ADDR[i];
+    pinMode(pin, OUTPUT);
+    digitalWriteFast(pin, (address >> i) & 0x01);
   }
 
-  for (unsigned int i = 0, j = 1; i < 8; i++, j = j << 1)
+  // Data bus
+  for (uint8_t i = 0; i < 8; i++)
   {
-    byte pin = DATA[i];
-
-    byte bit = digitalPinToBitMask(pin);
-
-    volatile byte *pOut = portOutputRegister(digitalPinToPort(pin));
-
-    if (data & j)
-      *pOut |= bit;
-    else
-      *pOut &= ~bit;
+    const uint8_t pin = DATA[i];
+    pinMode(pin, OUTPUT);
+    digitalWriteFast(pin, (data >> i) & 0x01);
   }
 
-  SREG = oldSREG;
+  interrupts();
 }
 
 void clearAddressData()
 {
-  byte oldSREG = SREG;
+  noInterrupts();
 
-  cli();
+  // Return all address pins to high impedance, no pullup
+  for (uint8_t i = 0; i < 16; i++)
+  {
+    const uint8_t pin = ADDR[i];
+    digitalWriteFast(pin, LOW);   // ensures no pullup when INPUT
+    pinMode(pin, INPUT);
+  }
 
-  DDRA &= ~ADDRDATAMASK[1];
-  DDRB &= ~ADDRDATAMASK[2];
-  DDRC &= ~ADDRDATAMASK[3];
-  DDRD &= ~ADDRDATAMASK[4];
-  DDRE &= ~ADDRDATAMASK[5];
-  DDRF &= ~ADDRDATAMASK[6];
-  DDRG &= ~ADDRDATAMASK[7];
-  DDRH &= ~ADDRDATAMASK[8];
-  DDRJ &= ~ADDRDATAMASK[10];
-  DDRK &= ~ADDRDATAMASK[11];
-  DDRL &= ~ADDRDATAMASK[12];
+  // Return all data pins to high impedance, no pullup
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    const uint8_t pin = DATA[i];
+    digitalWriteFast(pin, LOW);   // ensures no pullup when INPUT
+    pinMode(pin, INPUT);
+  }
 
-  PORTA &= ~ADDRDATAMASK[1];
-  PORTB &= ~ADDRDATAMASK[2];
-  PORTC &= ~ADDRDATAMASK[3];
-  PORTD &= ~ADDRDATAMASK[4];
-  PORTE &= ~ADDRDATAMASK[5];
-  PORTF &= ~ADDRDATAMASK[6];
-  PORTG &= ~ADDRDATAMASK[7];
-  PORTH &= ~ADDRDATAMASK[8];
-  PORTJ &= ~ADDRDATAMASK[10];
-  PORTK &= ~ADDRDATAMASK[11];
-  PORTL &= ~ADDRDATAMASK[12];
-
-  SREG = oldSREG;
+  interrupts();
 }
 
 bool isReading()
 {
-  return digitalRead(RW_READ);
+  return digitalReadFast(RW_READ);
 }
 
 void setRead()
 {
   pinMode(RW_READ, OUTPUT);
 
-  digitalWrite(RW_READ, HIGH);
+  digitalWriteFast(RW_READ, HIGH);
 }
 
 void setWrite()
 {
   pinMode(RW_READ, OUTPUT);
 
-  digitalWrite(RW_READ, LOW);
+  digitalWriteFast(RW_READ, LOW);
 
 }
 
@@ -577,7 +513,7 @@ void clearReadWrite()
 
 bool isOpCodeFetch()
 {
-  return digitalRead(SYNC);
+  return digitalReadFast(SYNC);
 }
 
 /*********
@@ -591,7 +527,7 @@ bool tryReset()
         
   pinMode(RESET, OUTPUT);
   
-  digitalWrite(RESET, LOW);
+  digitalWriteFast(RESET, LOW);
 
   // Reset needs to be held low for at least 2 clock cycles, we'll do 4 just to be safe
   for (int i = 0; i < 4; i++)
@@ -610,96 +546,81 @@ bool tryReset()
  **************/
 
 const long clockSelectPrescaler[] = { 0, 1, 8, 64, 256, 1024 };
+static bool monitorEnabled = false;
+
+IntervalTimer phi0Timer;
+
+volatile BusSample sampleBuffer[256];
+volatile uint16_t sampleWriteIndex = 0;
+volatile uint16_t sampleReadIndex = 0;
+volatile bool sampleOverflow = false;
+
+inline static void phi0Sample()
+{
+  uint16_t next = (sampleWriteIndex + 1) & 0xFF;
+  if (next == sampleReadIndex) {
+    sampleOverflow = true;
+    return;
+  }
+  sampleBuffer[sampleWriteIndex] = readSample();
+  sampleWriteIndex = next;
+}
+
+inline static void phi0ClockISR()
+{
+  // Toggle the clock pin each interrupt.
+  // Full square-wave frequency = interrupt frequency / 2
+  if (monitorEnabled && !digitalReadFast(PHI0)) {
+    phi0Sample();
+  }
+  digitalToggleFast(PHI0);
+}
 
 int startInternalClock(long frequencyInHz)
-{ 
-  uint8_t timer = digital_pin_to_timer_PGM[PHI0];
-
-  if (timer != TIMER3B && timer != TIMER3C)
-     return E_NOT_SUPPORTED;
-  
+{
   if (frequencyInHz == 0)
   {
     stopInternalClock();
     return E_OK;
   }
 
-  if (frequencyInHz > F_CPU / 4)
+  if (frequencyInHz < 1)
     return E_OUT_OF_RANGE;
 
+  // If external clock already detected, preserve original behavior
   if (!internalClock && waitForClock(HIGH, 2000) && waitForClock(LOW, 2000))
     return E_CLOCK_DETECTED;
 
-  byte clockSelect;
-  long period;
-  
-  for (clockSelect = 1; clockSelect < 6; clockSelect++)
-  {
-    period = F_CPU / 2 / clockSelectPrescaler[clockSelect] / frequencyInHz - 1;
-    
-    if (period < 65536)
-      break;
-  }
+  pinMode(PHI0, OUTPUT);
+  digitalWriteFast(PHI0, LOW);
 
-  switch (timer)
-  {
-    case TIMER3B:
-      TCCR3A = 0x10;
-      break;
+  // We toggle the pin in the ISR, so ISR rate is 2x desired clock frequency
+  const double interval_us = 1000000.0 / (2.0 * frequencyInHz);
 
-    case TIMER3C:
-      TCCR3A = 0x04;
-      break;     
-  }
-
-  TCCR3B = 0x08 | clockSelect; 
- 
-  OCR3A = period;
-  OCR3B = 0;
-  OCR3C = 0;
+  // IntervalTimer runs in microseconds
+  if (!phi0Timer.begin(phi0ClockISR, interval_us))
+    return E_NOT_SUPPORTED;
 
   internalClock = true;
-  
-  pinMode(PHI0, OUTPUT);
-
   return E_OK;
 }
 
 void stopInternalClock()
 {
+  phi0Timer.end();
+  digitalWriteFast(PHI0, LOW);
   pinMode(PHI0, INPUT);
-
-  TCCR3A = 0x01;
-  TCCR3B = 0x03;
-  
-  OCR3A = 0xFFFF;
-  OCR3B = 0;
-  OCR3C = 0;
-  
   internalClock = false;
 }
 
 bool waitForClock(byte value, unsigned long timeout)
 {
-  uint8_t bit = digitalPinToBitMask(PHI0);
-  uint8_t port = digitalPinToPort(PHI0);
-  timeout += millis();
+  unsigned long deadline = millis() + timeout;
 
-  if (value)
+  while (digitalReadFast(PHI0) != value)
   {
-    while ((*portInputRegister(port) & bit) == 0)
-    {
-      if (millis() > timeout)
-        return false;
-    }
-  }
-  else
-  {
-    while (*portInputRegister(port) & bit)
-    {
-      if (millis() > timeout)
-        return false;
-    }
+    if ((long)(millis() - deadline) > 0)
+      return false;
   }
 
   return true;
@@ -715,11 +636,9 @@ void disableProcessor()
     return;
     
   digitalWrite(READY, LOW);
-
   digitalWrite(BUS_ENABLE, LOW);    
 
   pinMode(READY, OUTPUT);
-
   pinMode(BUS_ENABLE, OUTPUT);
 }
 
@@ -729,11 +648,9 @@ void enableProcessor()
     return;
 
   digitalWrite(BUS_ENABLE, HIGH);
-
   digitalWrite(READY, HIGH);
   
   pinMode(BUS_ENABLE, INPUT);
-  
   pinMode(READY, INPUT);
 }
 
@@ -753,10 +670,9 @@ bool peek(unsigned int address, byte &data)
 
     setAddress(address);
 
-    if (waitForClock(HIGH, 1000))
+    if (waitForClock(HIGH, 1000) && waitForClock(LOW, 1000))
     {
       data = getData();
-      
       result = true;
     }
     
@@ -822,27 +738,42 @@ int consecutiveActionCount = 0;
 unsigned int lastAddress;
 byte lastAction = -1;
 
-void onClock()
-{
-  unsigned int address = getAddress();
-  bool reading = isReading();
-  bool opCodeFetch = isOpCodeFetch();
-  byte data = getData();
+inline BusSample readSample() {
+  BusSample s;
+  s.address = getAddress();
+  s.data = getData();
+  s.flags = 0;
+  if (isReading()) s.flags |= 0x01;
+  if (isOpCodeFetch()) s.flags |= 0x02;
+  return s;
+}
 
-  // First output what happened (byte read or write)
-  
+
+
+inline void processSample(size_t i)
+{
+  noInterrupts();
+  uint16_t address = sampleBuffer[sampleReadIndex].address;
+  uint8_t data = sampleBuffer[sampleReadIndex].data;
+  uint8_t flags = sampleBuffer[sampleReadIndex].flags;
+  sampleReadIndex = (sampleReadIndex + 1) & 0xFF;
+  interrupts();
+
+  bool reading = (flags & 0x01) != 0;
+  bool opCodeFetch = (flags & 0x02) != 0;
+
   byte currentAction = reading ? 0 : 1;
-        
-  if (opCodeFetch || lastAction != currentAction || address != lastAddress + 1) 
+
+  if (opCodeFetch || lastAction != currentAction || address != lastAddress + 1)
   {
     Serial.println();
     consecutiveActionCount = 1;
-    writef("%c %04x %c %02hx", opCodeFetch ? '*' : ' ', address, reading ? 'r' : 'W', data);
+    writef("%08x : %c %04x %c %02hx", i, opCodeFetch ? '*' : ' ', address, reading ? 'r' : 'W', data);
   }
   else
-  {    
+  {
     consecutiveActionCount++;
-    writef(" %02hx", data);    
+    writef(" %02hx", data);
   }
 
   lastAction = currentAction;
@@ -874,7 +805,7 @@ void onClock()
   
       case 2:
         operandBytesNeeded &= ~2;
-        operand |= data << 8;
+        operand |= ((unsigned int)data << 8);
         break;
     }
   }
@@ -887,10 +818,10 @@ void onClock()
     Serial.write(OPCODES[currentOpCode].mnemonic);
     
     if (currentAddressMode == AM_REL)
-      operand = currentOpAddress + ((char) operand) + 2;
+      operand = currentOpAddress + ((char)operand) + 2;
     
     writef(ADDRESSMODES[currentAddressMode].form, operand);
-   
+    
     operandBytesNeeded = -1;
     lastAction = -1;
   }
@@ -921,28 +852,28 @@ void measureClock()
 
   delay(2000);
 
+  noInterrupts();
   unsigned long elapsedCount = tickCount;
+  interrupts();
+
   unsigned long elapsedTime = micros() - startTime;
 
-  detachInterrupt(digitalPinToInterrupt(PHI0)); 
+  detachInterrupt(digitalPinToInterrupt(PHI0));
 
-  if (elapsedTime < 1980000 || elapsedCount > 202000)
+  if (elapsedTime < 1980000UL || elapsedCount > 202000UL)
   {
     Serial.println("500 INTERNAL ERROR - The clock is too fast to accurately measure");
   }
   else
   {
-    double frequency = 1000000.0 * elapsedCount / elapsedTime;
+    double frequency = 1000000.0 * (double)elapsedCount / (double)elapsedTime;
 
     char str_frequency[16];
-
     dtostrf(frequency, 1, 0, str_frequency);
-             
-    writelnf("200 OK - Counted %ld clock pulses in %ld ms for a clock frequency of %s Hz", 
-             elapsedCount, elapsedTime / 1000, str_frequency);
+    writelnf("200 OK - Counted %lu clock pulses in %lu ms for a clock frequency of %s Hz",
+             elapsedCount, elapsedTime / 1000UL, str_frequency);
   }
 }
-
 
 /*********************
    EEPROM Programmer
@@ -966,11 +897,11 @@ void readProm(unsigned int address, byte data[], int dataLength)
 
 void writeProm(unsigned int address, byte data[], int dataLength)
 {
-  int page = address >> 5;
+  unsigned int page = address >> 5;
 
   disableProcessor();
 
-  digitalWrite(PROM_OUTPUT_DISABLE, HIGH);
+  digitalWriteFast(PROM_OUTPUT_DISABLE, HIGH);
 
   for (int i = 0; i < dataLength; i++)
   {
@@ -989,7 +920,7 @@ void writeProm(unsigned int address, byte data[], int dataLength)
 
   delay(11);
 
-  digitalWrite(PROM_OUTPUT_DISABLE, LOW);
+  digitalWriteFast(PROM_OUTPUT_DISABLE, LOW);
 
   enableProcessor();
 }
@@ -998,11 +929,11 @@ void writeByteToProm(unsigned int address, byte data)
 {
     setAddressData(address, data);
 
-    digitalWrite(PROM_WRITE_DISABLE, LOW);
+    digitalWriteFast(PROM_WRITE_DISABLE, LOW);
 
     delayMicroseconds(1);
 
-    digitalWrite(PROM_WRITE_DISABLE, HIGH);
+    digitalWriteFast(PROM_WRITE_DISABLE, HIGH);
 
     delayMicroseconds(1);
 }
@@ -1011,7 +942,7 @@ void lockProm(unsigned int addressOffset)
 {
   disableProcessor();
 
-  digitalWrite(PROM_OUTPUT_DISABLE, HIGH);
+  digitalWriteFast(PROM_OUTPUT_DISABLE, HIGH);
 
   writeByteToProm(addressOffset + 0x5555, 0xAA);
   writeByteToProm(addressOffset + 0x2AAA, 0x55);
@@ -1021,7 +952,7 @@ void lockProm(unsigned int addressOffset)
 
   delay(11);
 
-  digitalWrite(PROM_OUTPUT_DISABLE, LOW);
+  digitalWriteFast(PROM_OUTPUT_DISABLE, LOW);
 
   enableProcessor();
 }
@@ -1030,7 +961,7 @@ void unlockProm(unsigned int addressOffset)
 {
   disableProcessor();
 
-  digitalWrite(PROM_OUTPUT_DISABLE, HIGH);
+  digitalWriteFast(PROM_OUTPUT_DISABLE, HIGH);
 
   writeByteToProm(addressOffset + 0x5555, 0xAA);
   writeByteToProm(addressOffset + 0x2AAA, 0x55);
@@ -1043,7 +974,7 @@ void unlockProm(unsigned int addressOffset)
 
   delay(11);
 
-  digitalWrite(PROM_OUTPUT_DISABLE, LOW);
+  digitalWriteFast(PROM_OUTPUT_DISABLE, LOW);
 
   enableProcessor();
 }
@@ -1225,25 +1156,23 @@ void startClock()
   }
 
   switch (startInternalClock(frequency))
-  {
-    case E_OK:
-      writelnf("200 OK - Generating internal clock at %ld Hz", frequency);
-    return;
-
-    case E_NOT_SUPPORTED:
-      Serial.println("500 INTERNAL ERROR - The clock pin has been changed to an unsupported pin. Generating an internal clock is only supported on Timer 3 on channel A or B.");
-    return;
-
-    case E_CLOCK_DETECTED:
-      Serial.println("409 CONFLICT - An external clock has been detected.");
-      return;
-
-    case E_OUT_OF_RANGE:
-      Serial.println("400 BAD REQUEST - The frequency requested exceeds the maximum frequency of the clock generator.");
-      return;
-  }
-  
-  Serial.println("500 INTERNAL ERROR - An unexpected error occurred");
+    {
+      case E_OK:
+        writelnf("200 OK - Generating internal clock at %ld Hz", frequency);
+        break;
+      case E_NOT_SUPPORTED:
+        Serial.println("500 INTERNAL ERROR - The clock pin has been changed to an unsupported pin. Generating an internal clock is only supported on Timer 3 on channel A or B.");
+        break;
+      case E_CLOCK_DETECTED:
+        Serial.println("409 CONFLICT - An external clock has been detected.");
+        break;
+      case E_OUT_OF_RANGE:
+        Serial.println("400 BAD REQUEST - The frequency requested exceeds the maximum frequency of the clock generator.");
+        break;
+      default:
+        Serial.println("500 INTERNAL ERROR - An unexpected error occurred");
+        break;
+    }
 }
 
 void stopClock()
@@ -1351,13 +1280,27 @@ void poke()
 
 void monitor()
 {
+
+  if (!tryReset()) { 
+    Serial.println("500 INTERNAL ERROR - Could not reset!");
+    return;
+  }
+
+  monitorEnabled = true;
+
   Serial.println("200 OK - Monitoring bus, send any key to stop...");
 
-  attachInterrupt(digitalPinToInterrupt(PHI0), onClock, RISING);
+  size_t index = 0;
 
-  getChar();
+  while(monitorEnabled) {
+    while (sampleReadIndex != sampleWriteIndex) {
+      processSample(index++);
+    }
+    if (Serial.available()) {
+      monitorEnabled = false;
+    }
+  }
 
-  detachInterrupt(digitalPinToInterrupt(PHI0));
 }
 
 void readProm()
